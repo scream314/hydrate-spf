@@ -49,15 +49,10 @@ def hydrate_mechanism(mechanism, domain=None):
     if "+" in mechanism:
         mechanism = mechanism.strip('+')
 
-    if mechanism == 'ip4':
+    if mechanism == 'ip4' or mechanism == 'ip6':
         hydration = '%s:%s' % (mechanism, value)
         if netmask:
             hydration += ('/%s' % netmask)
-        return hydration
-    if mechanism == 'ip6':
-        hydration = '%s:%s' % (mechanism, value)
-        if netmask:
-            hydration += ('/%s' % netmask6)
         return hydration
     if mechanism == 'a':
         records = []
