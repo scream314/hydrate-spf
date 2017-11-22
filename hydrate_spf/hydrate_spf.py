@@ -45,10 +45,19 @@ def hydrate_mechanism(mechanism, domain=None):
     'ip4:23.23.237.213 ip4:74.63.63.121 ip4:74.63.63.115 ip4:54.243.205.80'
     """
     (mechanism, value, netmask, netmask6) = spf.parse_mechanism(mechanism, domain)
+
+    if "+" in mechanism:
+        mechanism = mechanism.strip('+')
+
     if mechanism == 'ip4':
         hydration = '%s:%s' % (mechanism, value)
         if netmask:
             hydration += ('/%s' % netmask)
+        return hydration
+    if mechanism == 'ip6':
+        hydration = '%s:%s' % (mechanism, value)
+        if netmask:
+            hydration += ('/%s' % netmask6)
         return hydration
     if mechanism == 'a':
         records = []
@@ -68,22 +77,21 @@ def hydrate_mechanism(mechanism, domain=None):
         return ' '.join(records)
     if mechanism == 'include':
         records = []
-        for (_, (record)) in spf.DNSLookup(value, 'spf'):
-            # We get back a list of records, even if there's only one (the
-            # usual case).  But the RFC says multiple records are valid, so we
-            # might as well join in case there's more than one.
-            # http://www.openspf.org/RFC_4408#multiple-strings
+        for (_, (record)) in spf.DNSLookup(value, 'txt'):
             record = ''.join(record)
+            # TXT records are used for a lot of other things.
+            if record.split()[0] != spfPrefix:
+                continue
             records.append(
                 hydrate_record(record, domain=value, fullRecord=False))
-        # Did we fail to get something from the SPF lookup?  Try TXT instead.
+        # Did we fail to get something from the TXT lookup? Try (the deprecated) SPF instead.
         if not records:
-            for (_, (record)) in spf.DNSLookup(value, 'txt'):
+            for (_, (record)) in spf.DNSLookup(value, 'spf'):
+                # We get back a list of records, even if there's only one (the
+                # usual case).  But the RFC says multiple records are valid, so we
+                # might as well join in case there's more than one.
+                # http://www.openspf.org/RFC_4408#multiple-strings
                 record = ''.join(record)
-                # TXT records are used for a lot of other things.
-                if record.split()[0] != spfPrefix:
-                    continue
-
                 records.append(
                     hydrate_record(record, domain=value, fullRecord=False))
         # Sort the records so the order is predictable for our tests.
@@ -104,33 +112,36 @@ def hydrate_record(record, domain=None, fullRecord=True):
     spfSuffix = ''
 
     mechanisms = record.split()
-    mechanisms.remove(spfPrefix)
-    hydratedRecords = []
-    for mechanism in mechanisms:
-        # 'all' (and variants) ends rightward parsing.
-        # http://www.openspf.org/RFC_4408#mech-all
-        # Available qualifiers: http://www.openspf.org/RFC_4408#evaluation-mech
-        # TODO: This regex wants to be unit-tested.
-        if re.match(r'^[-+~?]?all$', mechanism):
-            spfSuffix = mechanism
-            break
-        hydratedRecords.append(hydrate_mechanism(mechanism, domain))
+    if spfPrefix in mechanisms:
+        mechanisms.remove(spfPrefix)
+        hydratedRecords = []
+        for mechanism in mechanisms:
+            # 'all' (and variants) ends rightward parsing.
+            # http://www.openspf.org/RFC_4408#mech-all
+            # Available qualifiers: http://www.openspf.org/RFC_4408#evaluation-mech
+            # TODO: This regex wants to be unit-tested.
+            if re.match(r'^[-+~?]?all$', mechanism):
+                spfSuffix = mechanism
+                break
+            hydratedRecords.append(hydrate_mechanism(mechanism, domain))
 
-    if fullRecord:
-        hydratedRecords = [spfPrefix] + hydratedRecords + [spfSuffix]
+        if fullRecord:
+            hydratedRecords = [spfPrefix] + hydratedRecords + [spfSuffix]
 
-    hydratedRecord = ' '.join(hydratedRecords)
+        hydratedRecord = ' '.join(hydratedRecords)
 
-    if fullRecord:
-        # DNS doesn't allow individual strings to be greater than 255
-        # characters.  Thankfully, the RFC specifies that multiple strings must
-        # be joined without additional whitespace, so we don't need to ensure
-        # we break on words.
-        # http://www.openspf.org/RFC_4408#multiple-strings
-        splitRecord = split_by_length(hydratedRecord, 255)
-        hydratedRecord = '"%s"' % '" "'.join(splitRecord)
+        if fullRecord:
+            # DNS doesn't allow individual strings to be greater than 255
+            # characters.  Thankfully, the RFC specifies that multiple strings must
+            # be joined without additional whitespace, so we don't need to ensure
+            # we break on words.
+            # http://www.openspf.org/RFC_4408#multiple-strings
+            splitRecord = split_by_length(hydratedRecord, 255)
+            hydratedRecord = '"%s"' % '" "'.join(splitRecord)
 
-    return hydratedRecord
+        return hydratedRecord
+    else:
+        return ""
 
 def split_by_length(string, length):
     # http://forums.devshed.com/python-programming/390312-efficient-splitting-string-fixed-size-chunks-post1627881.html#post1627881
